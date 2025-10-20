@@ -523,26 +523,52 @@ class InventoryPicker:
         
         selected_df['units_per_case'] = pd.to_numeric(selected_df['units_per_case'], errors='coerce')
         
-        # Calculate summary statistics
-        total_units = selected_df['units_per_case'].sum()
+        # Ensure all original inventory columns are preserved in the result
+        # Get the original column order from the inventory
+        original_columns = list(self.inventory_df.columns)
+        
+        # Reorder selected_df columns to match original inventory order
+        # Add any missing columns from original inventory with empty values
+        for col in original_columns:
+            if col not in selected_df.columns:
+                selected_df[col] = ''
+        
+        # Reorder columns to match original inventory
+        selected_df = selected_df[original_columns]
+        
+        # Create a mapping from internal column names back to original Excel column names
+        # This will restore the original uppercase column names from the Excel file
+        original_excel_columns = [
+            'CONTENEUR', 'CARTONS', 'BARCODE', 'SEASON', 'SECTION', 'PAYS', 
+            'DESCRIPTION', 'FAMILLIE', 'DETAIL', 'NOTES', 'COMPOSITION', 
+            'TARIFAIRE', 'PVP', 'PVP total', 'POIDS', 'SAISON INT.', 
+            'UNITES', 'MOCACO', 'RESERVATION', 'G. TARIF'
+        ]
+        
+        # Rename columns back to original Excel format
+        if len(original_excel_columns) == len(selected_df.columns):
+            selected_df.columns = original_excel_columns
+        
+        # Calculate summary statistics using original column names
+        total_units = selected_df['UNITES'].sum()
         total_boxes = len(selected_df)
         
         # Section distribution
-        section_summary = selected_df.groupby('section').agg({
-            'units_per_case': ['sum', 'count']
+        section_summary = selected_df.groupby('SECTION').agg({
+            'UNITES': ['sum', 'count']
         }).round(2)
         section_summary.columns = ['total_units', 'box_count']
         section_summary['percentage'] = (section_summary['total_units'] / total_units * 100).round(2)
         
         # Description distribution
-        description_summary = selected_df.groupby('description').agg({
-            'units_per_case': ['sum', 'count']
+        description_summary = selected_df.groupby('DESCRIPTION').agg({
+            'UNITES': ['sum', 'count']
         }).round(2)
         description_summary.columns = ['total_units', 'box_count']
         description_summary['percentage'] = (description_summary['total_units'] / total_units * 100).round(2)
         
         # Model summary
-        model_summary = selected_df.groupby('model')['units_per_case'].sum().reset_index()
+        model_summary = selected_df.groupby('MOCACO')['UNITES'].sum().reset_index()
         model_summary.columns = ['model', 'total_units']
         
         # Print summary

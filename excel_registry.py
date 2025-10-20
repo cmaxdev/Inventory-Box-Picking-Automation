@@ -33,8 +33,7 @@ class ExcelRegistry:
         # Directory structure
         self.directories = {
             'inventory': self.base_path / "inventory",
-            'client_orders': self.base_path / "orders" / "client_orders",
-            'selection_results': self.base_path / "orders" / "selection_results",
+            'orders': self.base_path / "orders",
             'history': self.base_path / "history",
             'templates': self.base_path / "templates"
         }
@@ -94,7 +93,7 @@ class ExcelRegistry:
         
         Args:
             file_path: Path to the Excel file
-            category: File category (inventory, client_orders, selection_results, history, templates)
+            category: File category (inventory, orders, history, templates)
             subcategory: Optional subcategory
             description: Description of the file
             client_name: Client name (for client orders)
@@ -206,10 +205,10 @@ class ExcelRegistry:
             return 'inventory', 'main', 'Main inventory data file'
         
         elif 'client_order' in filename_lower:
-            return 'client_orders', 'processed', 'Client order selection results'
+            return 'orders', 'processed', 'Client order selection results'
         
         elif any(x in filename_lower for x in ['selection_results', 'basic_selection', 'no_info_requirement', 'custom_constraints']):
-            return 'selection_results', 'automated', 'Automated selection results'
+            return 'orders', 'automated', 'Automated selection results'
         
         elif 'history' in filename_lower:
             return 'history', 'order_history', 'Order history tracking'
