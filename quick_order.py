@@ -13,10 +13,22 @@ Version: 1.0
 import sys
 import argparse
 from client_order_processor import ClientOrderProcessor
+from password_auth import auth
 
 
 def main():
     """Main function for quick order processing."""
+    # Check password protection
+    if auth.is_password_required():
+        print("🔒 Password protection is active!")
+        print("Please enter the password to continue:")
+        password = input("Password: ")
+        
+        if not auth.verify_password(password):
+            print("❌ Invalid password. Access denied.")
+            sys.exit(1)
+        print("✅ Password verified. Access granted.")
+    
     parser = argparse.ArgumentParser(
         description="Quick Order Processing for Inventory Box Picking",
         formatter_class=argparse.RawDescriptionHelpFormatter,

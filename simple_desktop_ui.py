@@ -14,6 +14,8 @@ import threading
 import os
 from datetime import datetime
 from client_order_processor import ClientOrderProcessor
+from password_auth import auth
+from password_dialog import PasswordDialog
 
 
 class SimpleInventoryGUI:
@@ -26,15 +28,24 @@ class SimpleInventoryGUI:
         # Center the window
         self.center_window()
         
+        # Check password protection
+        if not self._check_password():
+            self.root.destroy()
+            return
+        
         # Initialize the order processor
         self.order_processor = ClientOrderProcessor()
         self.order_processor.load_client_orders_history()
         
         # Create the GUI
         self.create_widgets()
-        
-        # Add some sample data for quick testing
-        self.set_sample_data()
+    
+    def _check_password(self):
+        """Check if password is required and verify it"""
+        if auth.is_password_required():
+            dialog = PasswordDialog(self.root)
+            return dialog.show()
+        return True
     
     def center_window(self):
         """Center the window on the screen."""
@@ -97,16 +108,13 @@ class SimpleInventoryGUI:
         file_frame.pack(fill=tk.X, pady=(0, 10))
         file_frame.columnconfigure(0, weight=1)
         
-        self.inventory_file_var = tk.StringVar(value="sample.xlsx")
+        self.inventory_file_var = tk.StringVar()
         inventory_file_entry = ttk.Entry(file_frame, textvariable=self.inventory_file_var, 
                                         font=('Arial', 11))
         inventory_file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         
         browse_button = ttk.Button(file_frame, text="Browse", command=self.browse_inventory_file)
-        browse_button.pack(side=tk.RIGHT, padx=(5, 0))
-        
-        create_sample_button = ttk.Button(file_frame, text="Create Sample", command=self.create_sample_inventory)
-        create_sample_button.pack(side=tk.RIGHT)
+        browse_button.pack(side=tk.RIGHT)
         
         # Options
         self.require_complete_info_var = tk.BooleanVar(value=True)
@@ -171,69 +179,6 @@ class SimpleInventoryGUI:
         
         if filename:
             self.inventory_file_var.set(filename)
-    
-    def create_sample_inventory(self):
-        """Create a sample inventory file."""
-        try:
-            import pandas as pd
-            import os
-            
-            # Create data/inventory directory if it doesn't exist
-            os.makedirs("data/inventory", exist_ok=True)
-            
-            # Create sample inventory data with correct structure
-            sample_data = []
-            sections = ['Women', 'Men', 'Children']
-            descriptions = ['Accessories', 'Trousers', 'Tops']
-            families = ['Fashion', 'Casual', 'Formal']
-            countries = ['France', 'Italy', 'Spain']
-            seasons = ['Spring', 'Summer', 'Fall', 'Winter']
-            
-            for i in range(1, 101):  # Create 100 sample items
-                section = sections[i % len(sections)]
-                description = descriptions[i % len(descriptions)]
-                family = families[i % len(families)]
-                country = countries[i % len(countries)]
-                season = seasons[i % len(seasons)]
-                model = f"MOC{i:04d}"
-                units = 5 + (i % 25)  # Random units between 5 and 29
-                price = 10.0 + (i % 50)  # Random price between 10 and 60
-                
-                sample_data.append({
-                    'CONTENEUR': f'CONT{i:03d}',
-                    'CARTONS': f'CART{i:03d}',
-                    'BARCODE': f'1234567890{i:03d}',
-                    'SEASON': season,
-                    'SECTION': section,
-                    'PAYS': country,
-                    'DESCRIPTION': description,
-                    'FAMILLIE': family,
-                    'DETAIL': f'Detail {i}',
-                    'NOTES': f'Notes for item {i}',
-                    'COMPOSITION': 'Cotton 100%',
-                    'TARIFAIRE': f'HS{i:06d}',
-                    'PVP': price,
-                    'PVP total': price * units,
-                    'POIDS': 0.5 + (i % 10) * 0.1,
-                    'SAISON INT.': season,
-                    'UNITES': units,
-                    'MOCACO': model,
-                    'RESERVATION': '',
-                    'G. TARIF': f'TARIF{i % 10}'
-                })
-            
-            # Create DataFrame and save to Excel
-            df = pd.DataFrame(sample_data)
-            sample_file = "data/inventory/sample_inventory.xlsx"
-            df.to_excel(sample_file, index=False)
-            
-            # Update the file path in the UI
-            self.inventory_file_var.set(sample_file)
-            
-            messagebox.showinfo("Success", f"Sample inventory file created successfully!\n\nFile saved to: {sample_file}")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error creating sample inventory file:\n{str(e)}")
     
     def set_sample_data(self):
         """Set sample data for quick testing."""
@@ -454,7 +399,7 @@ class SimpleInventoryGUI:
         self.client_name_var.set("")
         self.total_units_var.set("")
         self.requirements_var.set("")
-        self.inventory_file_var.set("sample.xlsx")
+        self.inventory_file_var.set("")
         self.require_complete_info_var.set(True)
         self.results_text.delete(1.0, tk.END)
         self.progress_var.set("Ready to process orders")
