@@ -15,7 +15,7 @@ class PasswordAuth:
         
         # Default password hash (password: "inventory2025")
         # This is a simple hash for demonstration - in production, use stronger encryption
-        self.password_hash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+        self.password_hash = "40f37fabeb8f358405b9387edea6b0257d67e96e6953eb6bca38e2ba087fb28f"
         
     def is_password_required(self) -> bool:
         """Check if password protection is currently required"""
