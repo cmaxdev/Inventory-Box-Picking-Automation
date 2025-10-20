@@ -18,6 +18,8 @@ import os
 from typing import Dict, List, Tuple, Optional
 import logging
 from datetime import datetime
+from file_manager import FileManager
+from excel_registry_utils import auto_register_excel, ExcelFileCreator
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +41,9 @@ class InventoryPicker:
         self.history_df = None
         self.selected_boxes = []
         self.max_units_per_model = 200
-        self.history_file = "order_history.xlsx"
+        self.history_file = "data/history/order_history.xlsx"
+        self.file_manager = FileManager()
+        self.excel_creator = ExcelFileCreator()
         
     def load_inventory(self, excel_file_path: str) -> bool:
         """
@@ -57,35 +61,63 @@ class InventoryPicker:
             # Read Excel file
             self.inventory_df = pd.read_excel(excel_file_path)
             
-            # Map column names to standardized names
+            # Map column names to standardized names based on actual file structure
             column_mapping = {
+                'CONTENEUR': 'container',
+                'CARTONS': 'cartons',
                 'BARCODE': 'barcode',
+                'SEASON': 'season',
+                'SECTION': 'section',
+                'PAYS': 'country',
+                'DESCRIPTION': 'description',
+                'FAMILLIE': 'family',
+                'DETAIL': 'detail',
+                'NOTES': 'notes',
                 'COMPOSITION': 'composition',
                 'TARIFAIRE': 'hs_code',
                 'PVP': 'price',
-                'G. TARIF': 'tariff_group',
-                'SECTION': 'section',
-                'DESCRIPTION': 'description',
+                'PVP total': 'total_price',
+                'POIDS': 'weight',
+                'SAISON INT.': 'internal_season',
+                'UNITES': 'units_per_case',
                 'MOCACO': 'model',
-                'UNITES': 'units_per_case'
+                'RESERVATION': 'reservation',
+                'G. TARIF': 'tariff_group'
             }
             
             # Rename columns
             self.inventory_df = self.inventory_df.rename(columns=column_mapping)
             
-            # Validate required columns
-            required_columns = ['barcode', 'composition', 'hs_code', 'price', 
-                              'tariff_group', 'section', 'description', 'model', 'units_per_case']
+            # Validate required columns based on project requirements
+            required_columns = ['barcode', 'composition', 'hs_code', 'price', 'tariff_group', 
+                              'section', 'description', 'model', 'units_per_case']
             
             missing_columns = [col for col in required_columns if col not in self.inventory_df.columns]
             if missing_columns:
                 logger.error(f"Missing required columns: {missing_columns}")
                 return False
             
-            # Clean data
-            self.inventory_df = self.inventory_df.dropna(subset=['barcode', 'model', 'units_per_case'])
+            # Clean data - only keep rows with essential information
+            self.inventory_df = self.inventory_df.dropna(subset=['barcode', 'model', 'units_per_case', 'section', 'description'])
+            
+            # Ensure all required columns exist (fill missing ones with empty strings)
+            for col in required_columns:
+                if col not in self.inventory_df.columns:
+                    self.inventory_df[col] = ''
+            
+            # Convert units_per_case to numeric
             self.inventory_df['units_per_case'] = pd.to_numeric(self.inventory_df['units_per_case'], errors='coerce')
             self.inventory_df = self.inventory_df.dropna(subset=['units_per_case'])
+            
+            # Remove rows with zero or negative units
+            self.inventory_df = self.inventory_df[self.inventory_df['units_per_case'] > 0]
+            
+            # Ensure model column is string type for consistent merging
+            self.inventory_df['model'] = self.inventory_df['model'].astype(str)
+            
+            # Clean text columns
+            self.inventory_df['section'] = self.inventory_df['section'].astype(str).str.strip()
+            self.inventory_df['description'] = self.inventory_df['description'].astype(str).str.strip()
             
             logger.info(f"Inventory loaded successfully: {len(self.inventory_df)} boxes")
             return True
@@ -136,9 +168,21 @@ class InventoryPicker:
         logger.info(f"Filtering by information completeness: {require_complete_info}")
         
         if require_complete_info:
-            # Option A: Only boxes with complete information
-            info_columns = ['composition', 'hs_code', 'price', 'tariff_group']
-            complete_info_mask = self.inventory_df[info_columns].notna().all(axis=1)
+            # Option A: Only boxes with complete information (composition, HS code, price, tariff group not null/empty)
+            complete_info_mask = (
+                self.inventory_df['composition'].notna() & 
+                (self.inventory_df['composition'].astype(str).str.strip() != '') &
+                (self.inventory_df['composition'].astype(str).str.strip() != 'nan') &
+                self.inventory_df['hs_code'].notna() & 
+                (self.inventory_df['hs_code'].astype(str).str.strip() != '') &
+                (self.inventory_df['hs_code'].astype(str).str.strip() != 'nan') &
+                self.inventory_df['price'].notna() & 
+                (self.inventory_df['price'].astype(str).str.strip() != '') &
+                (self.inventory_df['price'].astype(str).str.strip() != 'nan') &
+                self.inventory_df['tariff_group'].notna() & 
+                (self.inventory_df['tariff_group'].astype(str).str.strip() != '') &
+                (self.inventory_df['tariff_group'].astype(str).str.strip() != 'nan')
+            )
             filtered_df = self.inventory_df[complete_info_mask].copy()
             logger.info(f"Complete info filter: {len(filtered_df)}/{len(self.inventory_df)} boxes selected")
         else:
@@ -168,6 +212,10 @@ class InventoryPicker:
             # Merge with history data
             history_agg = self.history_df.groupby('model')['total_units_shipped'].sum().reset_index()
             history_agg.columns = ['model', 'units_shipped_historically']
+            
+            # Ensure both 'model' columns are the same data type (string)
+            inventory_df['model'] = inventory_df['model'].astype(str)
+            history_agg['model'] = history_agg['model'].astype(str)
             
             inventory_df = inventory_df.merge(
                 history_agg, 
@@ -230,7 +278,18 @@ class InventoryPicker:
         
         # Select boxes by section using greedy algorithm
         for section, target_units in section_targets.items():
-            section_boxes = remaining_inventory[remaining_inventory['section'] == section]
+            if target_units <= 0:
+                continue
+                
+            # Find matching sections (case-insensitive)
+            section_boxes = remaining_inventory[
+                remaining_inventory['section'].str.lower().str.strip() == section.lower().strip()
+            ]
+            
+            if len(section_boxes) == 0:
+                logger.warning(f"No boxes found for section '{section}'. Available sections: {remaining_inventory['section'].unique()}")
+                continue
+            
             section_boxes = section_boxes.sort_values('units_per_case', ascending=False)
             
             selected_units = 0
@@ -245,12 +304,17 @@ class InventoryPicker:
                     ]
         
         # Verify description percentages
-        if description_percentages:
+        if description_percentages and selected_boxes:
             selected_df = pd.DataFrame(selected_boxes)
-            description_compliance = self._check_description_percentages(
-                selected_df, description_percentages
-            )
-            logger.info(f"Description compliance: {description_compliance}")
+            # Ensure units_per_case column exists and is numeric
+            if 'units_per_case' in selected_df.columns:
+                selected_df['units_per_case'] = pd.to_numeric(selected_df['units_per_case'], errors='coerce')
+                description_compliance = self._check_description_percentages(
+                    selected_df, description_percentages
+                )
+                logger.info(f"Description compliance: {description_compliance}")
+            else:
+                logger.warning("units_per_case column not found in selected boxes")
         
         logger.info(f"Selected {len(selected_boxes)} boxes")
         return selected_boxes
@@ -367,6 +431,20 @@ class InventoryPicker:
         
         # Save updated history
         self.history_df.to_excel(self.history_file, index=False)
+        
+        # Register the history file in the registry
+        try:
+            self.file_manager.registry.register_file(
+                file_path=self.history_file,
+                category='history',
+                subcategory='order_history',
+                description='Order history tracking file with model usage statistics',
+                tags=['historical', 'order_tracking']
+            )
+            logger.info(f"History file registered in Excel registry: {self.history_file}")
+        except Exception as e:
+            logger.warning(f"Could not register history file in registry: {e}")
+        
         logger.info(f"History updated with {len(new_history_records)} model records")
     
     def generate_output(self, selected_boxes: List[Dict], output_file: str = None):
@@ -381,9 +459,69 @@ class InventoryPicker:
         
         if not selected_boxes:
             logger.warning("No boxes selected")
-            return
+            # Still create an output file even when no boxes are selected
+            if output_file and output_file.strip():
+                try:
+                    # Create empty result file with summary information
+                    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                        # Create empty summary sheet
+                        empty_summary = pd.DataFrame({
+                            'Metric': ['Total Boxes Selected', 'Total Units', 'Selection Status'],
+                            'Value': [0, 0, 'No boxes selected - requirements may not match inventory data']
+                        })
+                        empty_summary.to_excel(writer, sheet_name='Summary', index=False)
+                        
+                        # Create information sheet about available data
+                        info_data = {
+                            'Available Sections': ['Woman'],
+                            'Available Descriptions': ['DRESS', 'OVERALL', 'TROUSERS', 'LEGGINGS', 'SKIRT', 'BIB OVERALL'],
+                            'Note': ['Use these exact names in your requirements']
+                        }
+                        info_df = pd.DataFrame(info_data)
+                        info_df.to_excel(writer, sheet_name='Available_Data', index=False)
+                        
+                    logger.info(f"Empty result file created: {output_file}")
+                except Exception as e:
+                    logger.error(f"Error creating empty result file: {e}")
+            
+            return {
+                'total_boxes': 0,
+                'total_units': 0,
+                'target_units': 0,
+                'units_difference': 0,
+                'selection_efficiency': 0.0,
+                'section_summary': pd.DataFrame(),
+                'description_summary': pd.DataFrame(),
+                'compliance': {
+                    'section_compliance': 0.0,
+                    'description_compliance': 0.0,
+                    'overall_compliance': 0.0
+                },
+                'output_file': output_file if output_file and output_file.strip() else None
+            }
         
         selected_df = pd.DataFrame(selected_boxes)
+        
+        # Ensure units_per_case column exists and is numeric
+        if 'units_per_case' not in selected_df.columns:
+            logger.error("units_per_case column not found in selected boxes")
+            return {
+                'total_boxes': 0,
+                'total_units': 0,
+                'target_units': 0,
+                'units_difference': 0,
+                'selection_efficiency': 0.0,
+                'section_summary': pd.DataFrame(),
+                'description_summary': pd.DataFrame(),
+                'compliance': {
+                    'section_compliance': 0.0,
+                    'description_compliance': 0.0,
+                    'overall_compliance': 0.0
+                },
+                'output_file': output_file if output_file and output_file.strip() else None
+            }
+        
+        selected_df['units_per_case'] = pd.to_numeric(selected_df['units_per_case'], errors='coerce')
         
         # Calculate summary statistics
         total_units = selected_df['units_per_case'].sum()
@@ -421,12 +559,30 @@ class InventoryPicker:
         print(model_summary)
         
         # Save to Excel if output file specified
-        if output_file:
+        if output_file and output_file.strip():
+            # Ensure the directory exists (only if there's a directory path)
+            output_dir = os.path.dirname(output_file)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            
             with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
                 selected_df.to_excel(writer, sheet_name='Selected_Boxes', index=False)
                 section_summary.to_excel(writer, sheet_name='Section_Summary')
                 description_summary.to_excel(writer, sheet_name='Description_Summary')
                 model_summary.to_excel(writer, sheet_name='Model_Summary')
+            
+            # Automatically register the file in the registry
+            try:
+                self.file_manager.registry.register_file(
+                    file_path=output_file,
+                    category='selection_results',
+                    subcategory='automated',
+                    description='Automated inventory selection results',
+                    tags=['automated', 'selection_results']
+                )
+                logger.info(f"File registered in Excel registry: {output_file}")
+            except Exception as e:
+                logger.warning(f"Could not register file in registry: {e}")
             
             logger.info(f"Output saved to: {output_file}")
         
@@ -439,6 +595,12 @@ class InventoryPicker:
             'total_boxes': total_boxes
         }
     
+    @auto_register_excel(
+        category='selection_results',
+        subcategory='automated',
+        description='Automated inventory selection results',
+        tags=['automated', 'selection_results']
+    )
     def run_selection_process(
         self,
         excel_file_path: str,
@@ -492,6 +654,11 @@ class InventoryPicker:
         self.update_history(final_selected_boxes)
         
         # Step 7: Generate output
+        if not output_file:
+            # Generate default output file path (save in data/orders/ directory)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_file = f"data/orders/selection_results_{timestamp}.xlsx"
+        
         results = self.generate_output(final_selected_boxes, output_file)
         
         logger.info("Selection process completed successfully")
@@ -503,7 +670,7 @@ def main():
     picker = InventoryPicker()
     
     # Example usage - replace with your actual parameters
-    excel_file_path = "sample_inventory.xlsx"  # Replace with your inventory file path
+    excel_file_path = "data/inventory/sample_inventory.xlsx"  # Replace with your inventory file path
     
     # Configuration parameters
     require_complete_info = True  # Set to False if you don't require complete information

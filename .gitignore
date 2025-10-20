@@ -145,6 +145,11 @@ selection_results_*.xlsx
 basic_selection_*.xlsx
 no_info_requirement_*.xlsx
 custom_constraints_*.xlsx
+client_order_*.xlsx
+
+# Client order history (contains business data)
+client_orders_history.xlsx
+client_orders.log
 
 # IDE files
 .vscode/
