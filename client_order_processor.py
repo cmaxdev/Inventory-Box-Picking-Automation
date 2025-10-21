@@ -103,67 +103,91 @@ class ClientOrderProcessor:
         """
         logger.info(f"Parsing requirements: {requirements}")
         
-        # Default values (based on actual data structure)
-        section_percentages = {"Woman": 0.0, "Men": 0.0, "Children": 0.0}
-        description_percentages = {"DRESS": 0.0, "OVERALL": 0.0, "TROUSERS": 0.0, "LEGGINGS": 0.0, "SKIRT": 0.0, "BIB OVERALL": 0.0}
+        # Default values (will be populated dynamically based on requirements)
+        section_percentages = {}
+        description_percentages = {}
         
-        # Parse section percentages
-        if "women" in requirements.lower() or "woman" in requirements.lower():
-            women_pct = self._extract_percentage(requirements, ["women", "woman"])
-            section_percentages["Woman"] = women_pct
+        # Parse section percentages dynamically
+        # Look for any section names mentioned in the requirements
+        import re
         
-        if "men" in requirements.lower() or "man" in requirements.lower():
-            men_pct = self._extract_percentage(requirements, ["men", "man"])
-            section_percentages["Men"] = men_pct
-            
-        if "children" in requirements.lower() or "child" in requirements.lower():
-            children_pct = self._extract_percentage(requirements, ["children", "child"])
-            section_percentages["Children"] = children_pct
+        # Common section patterns with flexible mapping
+        section_patterns = [
+            (r'(\d+(?:\.\d+)?)\s*%\s*(women|woman|female|females)', 'Woman'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(men|man|male|males)', 'Man'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(children|child|kids|kid|boys|boy|girls|girl)', 'Children')
+        ]
         
-        # If no sections specified, default to Woman 100%
+        for pattern, section_name in section_patterns:
+            match = re.search(pattern, requirements.lower())
+            if match:
+                percentage = float(match.group(1))
+                section_percentages[section_name] = percentage
+        
+        # If no sections specified, try to infer from context
         if sum(section_percentages.values()) == 0:
-            section_percentages["Woman"] = 100.0
+            # Look for any percentage without explicit section
+            percentage_matches = re.findall(r'(\d+(?:\.\d+)?)\s*%', requirements.lower())
+            if percentage_matches:
+                # If only one percentage found, assume it's for the main section
+                if len(percentage_matches) == 1:
+                    section_percentages["Woman"] = float(percentage_matches[0])
+                else:
+                    # Multiple percentages without sections - distribute equally
+                    total_pct = sum(float(p) for p in percentage_matches)
+                    if total_pct <= 100:
+                        section_percentages["Woman"] = total_pct
+                    else:
+                        section_percentages["Woman"] = 100.0
+            else:
+                # No percentages found, default to Woman 100%
+                section_percentages["Woman"] = 100.0
         
-        # Parse description percentages (based on actual data structure)
-        if "dress" in requirements.lower():
-            dress_pct = self._extract_percentage(requirements, ["dress", "dresses"])
-            description_percentages["DRESS"] = dress_pct
-            
-        if "overall" in requirements.lower():
-            overall_pct = self._extract_percentage(requirements, ["overall", "overalls"])
-            description_percentages["OVERALL"] = overall_pct
-            
-        if "pants" in requirements.lower() or "trousers" in requirements.lower():
-            pants_pct = self._extract_percentage(requirements, ["pants", "trousers"])
-            description_percentages["TROUSERS"] = pants_pct
-            
-        if "leggings" in requirements.lower():
-            leggings_pct = self._extract_percentage(requirements, ["leggings", "legging"])
-            description_percentages["LEGGINGS"] = leggings_pct
-            
-        if "skirt" in requirements.lower():
-            skirt_pct = self._extract_percentage(requirements, ["skirt", "skirts"])
-            description_percentages["SKIRT"] = skirt_pct
-            
-        if "bib overall" in requirements.lower():
-            bib_pct = self._extract_percentage(requirements, ["bib overall", "bib overalls"])
-            description_percentages["BIB OVERALL"] = bib_pct
+        # Parse description percentages dynamically with flexible mapping
+        # Support both formats: "50% dress" and "dress 50%"
+        description_patterns = [
+            # Format: "50% dress" or "dress 50%"
+            (r'(\d+(?:\.\d+)?)\s*%\s*(dress|dresses|gown|gowns)|(dress|dresses|gown|gowns)\s*(\d+(?:\.\d+)?)\s*%', 'DRESS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(trousers|pants)|(trousers|pants)\s*(\d+(?:\.\d+)?)\s*%', 'TROUSERS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(t-shirt|tshirt|t shirt|top|tops)|(t-shirt|tshirt|t shirt|top|tops)\s*(\d+(?:\.\d+)?)\s*%', 'T-SHIRT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(accessories|accessory|bag|bags)|(accessories|accessory|bag|bags)\s*(\d+(?:\.\d+)?)\s*%', 'ACCESSORIES'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(shirt|shirts)|(shirt|shirts)\s*(\d+(?:\.\d+)?)\s*%', 'SHIRT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(skirt|skirts)|(skirt|skirts)\s*(\d+(?:\.\d+)?)\s*%', 'SKIRT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(o\.garment|o garment|other garment)|(o\.garment|o garment|other garment)\s*(\d+(?:\.\d+)?)\s*%', 'O.GARMENT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(overall|overalls)|(overall|overalls)\s*(\d+(?:\.\d+)?)\s*%', 'OVERALL'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(leggings|legging)|(leggings|legging)\s*(\d+(?:\.\d+)?)\s*%', 'LEGGINGS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(bib overall|bib overalls)|(bib overall|bib overalls)\s*(\d+(?:\.\d+)?)\s*%', 'BIB OVERALL'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(jacket|jackets)|(jacket|jackets)\s*(\d+(?:\.\d+)?)\s*%', 'JACKET'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(coat|coats)|(coat|coats)\s*(\d+(?:\.\d+)?)\s*%', 'COAT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(sweater|sweaters)|(sweater|sweaters)\s*(\d+(?:\.\d+)?)\s*%', 'SWEATER'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(blouse|blouses)|(blouse|blouses)\s*(\d+(?:\.\d+)?)\s*%', 'BLOUSE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(polo|polos)|(polo|polos)\s*(\d+(?:\.\d+)?)\s*%', 'POLO'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(hoodie|hoodies)|(hoodie|hoodies)\s*(\d+(?:\.\d+)?)\s*%', 'HOODIE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(jeans|jean)|(jeans|jean)\s*(\d+(?:\.\d+)?)\s*%', 'JEANS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(shorts|short)|(shorts|short)\s*(\d+(?:\.\d+)?)\s*%', 'SHORTS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(underwear|underwears)|(underwear|underwears)\s*(\d+(?:\.\d+)?)\s*%', 'UNDERWEAR'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(socks|sock)|(socks|sock)\s*(\d+(?:\.\d+)?)\s*%', 'SOCKS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(tank-top|tank tops|tanktop|tanktops)|(tank-top|tank tops|tanktop|tanktops)\s*(\d+(?:\.\d+)?)\s*%', 'TANK-TOP')
+        ]
+        
+        for pattern, description_name in description_patterns:
+            match = re.search(pattern, requirements.lower())
+            if match:
+                # Handle both formats: "50% dress" (group 1) or "dress 50%" (group 4)
+                if match.group(1):  # Format: "50% dress"
+                    percentage = float(match.group(1))
+                else:  # Format: "dress 50%"
+                    percentage = float(match.group(4))
+                description_percentages[description_name] = percentage
         
         # If no descriptions specified, default to equal distribution of available descriptions
         if sum(description_percentages.values()) == 0:
             description_percentages = {"DRESS": 33.33, "TROUSERS": 33.33, "LEGGINGS": 33.34}
         
-        # If descriptions don't add up to 100%, distribute remaining to unspecified categories
+        # Use the client's requirements as-is, don't distribute remaining percentages
+        # The client knows what they want, so we respect their exact specifications
         total_desc_pct = sum(description_percentages.values())
-        if total_desc_pct > 0 and total_desc_pct < 100:
-            remaining_pct = 100 - total_desc_pct
-            # Distribute remaining to categories with 0%
-            zero_categories = [k for k, v in description_percentages.items() if v == 0]
-            if zero_categories:
-                pct_per_category = remaining_pct / len(zero_categories)
-                for category in zero_categories:
-                    description_percentages[category] = pct_per_category
-        elif total_desc_pct > 100:
+        if total_desc_pct > 100:
             # If percentages exceed 100%, normalize them
             for key in description_percentages:
                 description_percentages[key] = (description_percentages[key] / total_desc_pct) * 100
