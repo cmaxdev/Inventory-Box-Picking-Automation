@@ -258,179 +258,302 @@ class InventoryPicker:
         self, 
         inventory_df: pd.DataFrame,
         section_percentages: Dict[str, float],
-        description_percentages: Dict[str, float],
+        family_percentages: Dict[str, float],
         total_units_target: int
     ) -> List[Dict]:
         """
-        Select boxes based on percentage distribution.
+        Select boxes based on hierarchical percentage distribution following the detailed requirements.
         
         Args:
             inventory_df: Filtered inventory dataframe
-            section_percentages: Target percentages by section
-            description_percentages: Target percentages by description
+            section_percentages: Target percentages by section (MEN, WOMEN, CHILDREN)
+            family_percentages: Target percentages by family (ACCESSOIR, CHEMISE, etc.)
             total_units_target: Target total units for the order
             
         Returns:
             List[Dict]: Selected boxes
         """
-        logger.info("Starting percentage-based selection...")
+        logger.info("Starting hierarchical percentage-based selection...")
         logger.info(f"Section percentages: {section_percentages}")
-        logger.info(f"Description percentages: {description_percentages}")
+        logger.info(f"Family percentages: {family_percentages}")
         logger.info(f"Target total units: {total_units_target}")
         
-        selected_boxes = []
-        remaining_inventory = inventory_df.copy()
+        # Step 1: Calculate available stock by SECTION+FAMILY+DETAIL
+        logger.info("Step 1: Calculating available stock by SECTION+FAMILY+DETAIL...")
+        stock_analysis = self._calculate_stock_availability(inventory_df)
         
-        # Check if target exceeds available inventory
-        total_available_units = remaining_inventory['units_per_case'].sum()
-        if total_units_target > total_available_units:
-            logger.warning(f"Target units ({total_units_target}) exceed available inventory ({total_available_units})")
-            logger.warning(f"Will select all available units: {total_available_units}")
-            total_units_target = total_available_units
+        # Step 2: Distribute order quantity by SECTION first
+        logger.info("Step 2: Distributing order quantity by SECTION...")
+        section_targets = self._calculate_section_targets(total_units_target, section_percentages)
         
-        # Calculate target units per section
-        section_targets = {}
-        for section, percentage in section_percentages.items():
-            target_units = int(total_units_target * percentage / 100)
-            section_targets[section] = target_units
-            logger.info(f"Target for {section}: {target_units} units")
+        # Step 3: Distribute by FAMILY within each SECTION
+        logger.info("Step 3: Distributing by FAMILY within each SECTION...")
+        section_family_targets = self._calculate_section_family_targets(section_targets, family_percentages)
         
-        # Implement iterative selection algorithm as per requirements
-        # This is a complex optimization problem that requires iterative refinement
-        logger.info("Starting iterative selection algorithm...")
+        # Step 4: Distribute by DETAIL within each SECTION+FAMILY
+        logger.info("Step 4: Distributing by DETAIL within each SECTION+FAMILY...")
+        detailed_targets = self._calculate_detailed_targets(section_family_targets, stock_analysis)
         
-        # Step 1: Filter inventory by descriptions first (if specified)
-        if description_percentages and any(p > 0 for p in description_percentages.values()):
-            logger.info("Step 1: Filtering inventory by specified descriptions...")
-            description_filtered_inventory = remaining_inventory.copy()
-            
-            # Get all valid descriptions from the requirements
-            valid_descriptions = []
-            for desc, percentage in description_percentages.items():
-                if percentage > 0:
-                    valid_descriptions.append(desc)
-            
-            if valid_descriptions:
-                # Create a mask for items that match any of the specified descriptions
-                description_mask = pd.Series([False] * len(description_filtered_inventory), index=description_filtered_inventory.index)
-                
-                for description in valid_descriptions:
-                    # Try exact match first
-                    exact_match = description_filtered_inventory['description'].str.lower().str.strip() == description.lower().strip()
-                    description_mask |= exact_match
-                    
-                    # If no exact match, try intelligent mapping
-                    if not exact_match.any():
-                        available_descriptions = description_filtered_inventory['description'].unique()
-                        logger.warning(f"No exact match for description '{description}'. Available descriptions: {available_descriptions}")
-                        
-                        # Intelligent mapping based on common patterns
-                        description_mapping = {
-                            'dress': ['gown', 'gowns', 'frock', 'frocks', 'robe'],
-                            'trousers': ['pants', 'trouser', 'pantalons'],
-                            't-shirt': ['top', 'tops', 'tee', 'tees', 'tshirt', 'crop-top'],
-                            'accessories': ['bag', 'bags', 'accessory', 'accessoir', 'belt', 'ceinture'],
-                            'shirt': ['shirts', 'blouse', 'blouses'],
-                            'skirt': ['skirts'],
-                            'tank-top': ['tank tops', 'tanktop', 'tanktops', 'singlet', 'singlets'],
-                            'overall': ['overalls', 'overall'],
-                            'socks': ['sock', 'socks']
-                        }
-                        
-                        mapped_description = None
-                        desc_lower = description.lower().strip()
-                        
-                        # Check if we can map to a known pattern
-                        for pattern, variations in description_mapping.items():
-                            if desc_lower == pattern or desc_lower in variations:
-                                # Find matching available description
-                                for avail_desc in available_descriptions:
-                                    avail_lower = avail_desc.lower().strip()
-                                    if (pattern in avail_lower or 
-                                        any(var in avail_lower for var in variations) or
-                                        avail_lower in variations):
-                                        mapped_description = avail_desc
-                                        break
-                                if mapped_description:
-                                    break
-                        
-                        # If still no mapping, try partial matches
-                        if not mapped_description:
-                            for avail_desc in available_descriptions:
-                                if (description.lower().strip() in avail_desc.lower().strip() or 
-                                    avail_desc.lower().strip() in description.lower().strip()):
-                                    mapped_description = avail_desc
-                                    break
-                        
-                        if mapped_description:
-                            logger.info(f"Found intelligent mapping: '{description}' -> '{mapped_description}'")
-                            intelligent_match = description_filtered_inventory['description'].str.lower().str.strip() == mapped_description.lower().strip()
-                            description_mask |= intelligent_match
-                        else:
-                            logger.warning(f"No match found for description '{description}'. Skipping.")
-                
-                # Apply the description filter
-                description_filtered_inventory = description_filtered_inventory[description_mask]
-                logger.info(f"After description filtering: {len(description_filtered_inventory)} boxes available")
-                
-                # Update remaining_inventory to only include description-filtered items
-                remaining_inventory = description_filtered_inventory
-        
-        # Step 2: Exact percentage matching algorithm
-        logger.info("Step 2: Exact percentage matching algorithm...")
-        
-        # Calculate exact target units per description
-        description_targets = {}
-        if description_percentages and any(p > 0 for p in description_percentages.values()):
-            for desc, percentage in description_percentages.items():
-                if percentage > 0:
-                    target_units = int(total_units_target * percentage / 100)
-                    description_targets[desc] = target_units
-                    logger.info(f"Exact target for {desc}: {target_units} units ({percentage}%)")
-        
-        # Use exact percentage matching algorithm
-        selected_boxes = self._exact_percentage_matching(
-            remaining_inventory, 
-            total_units_target, 
-            section_targets, 
-            description_targets
-        )
-        
-        # Log final results
-        current_total = sum(box['units_per_case'] for box in selected_boxes)
-        logger.info(f"Final total: {current_total} units (target: {total_units_target})")
-        
-        # Log final description distribution
-        if description_targets:
-            description_counts = {}
-            for box in selected_boxes:
-                desc = box['description']
-                description_counts[desc] = description_counts.get(desc, 0) + box['units_per_case']
-            
-            logger.info("Final description distribution:")
-            for desc, count in description_counts.items():
-                target = description_targets.get(desc, 0)
-                percentage = (count / current_total * 100) if current_total > 0 else 0
-                target_percentage = (target / total_units_target * 100) if total_units_target > 0 else 0
-                logger.info(f"  {desc}: {count} units ({percentage:.1f}%) [target: {target} units ({target_percentage:.1f}%)]")
-        
-        # Description filtering is now done at the beginning, so no need for additional filtering here
-        
-        # Verify description percentages
-        if description_percentages and selected_boxes:
-            selected_df = pd.DataFrame(selected_boxes)
-            # Ensure units_per_case column exists and is numeric
-            if 'units_per_case' in selected_df.columns:
-                selected_df['units_per_case'] = pd.to_numeric(selected_df['units_per_case'], errors='coerce')
-                description_compliance = self._check_description_percentages(
-                    selected_df, description_percentages
-                )
-                logger.info(f"Description compliance: {description_compliance}")
-            else:
-                logger.warning("units_per_case column not found in selected boxes")
+        # Step 5: Select full boxes (CARTONS) to meet the targets
+        logger.info("Step 5: Selecting full boxes (CARTONS)...")
+        selected_boxes = self._select_full_boxes(inventory_df, detailed_targets)
         
         logger.info(f"Selected {len(selected_boxes)} boxes")
         return selected_boxes
+    
+    def _calculate_stock_availability(self, inventory_df: pd.DataFrame) -> Dict:
+        """
+        Calculate available stock grouped by SECTION+FAMILY+DETAIL combinations.
+        
+        Args:
+            inventory_df: Inventory dataframe
+            
+        Returns:
+            Dict: Stock analysis with percentages
+        """
+        logger.info("Calculating stock availability by SECTION+FAMILY+DETAIL...")
+        
+        # Group by SECTION+FAMILY+DETAIL and sum units
+        stock_by_combination = inventory_df.groupby(['section', 'family', 'detail']).agg({
+            'units_per_case': 'sum',
+            'cartons': 'nunique'
+        }).reset_index()
+        
+        # Calculate percentages within each SECTION+FAMILY group
+        stock_analysis = {}
+        for (section, family), group in stock_by_combination.groupby(['section', 'family']):
+            total_family_units = group['units_per_case'].sum()
+            key = f"{section}|{family}"
+            stock_analysis[key] = {
+                'total_units': total_family_units,
+                'details': {}
+            }
+            
+            for _, row in group.iterrows():
+                detail = row['detail']
+                units = row['units_per_case']
+                percentage = (units / total_family_units * 100) if total_family_units > 0 else 0
+                stock_analysis[key]['details'][detail] = {
+                    'units': units,
+                    'percentage': percentage,
+                    'cartons_count': row['cartons']
+                }
+        
+        logger.info(f"Stock analysis completed for {len(stock_analysis)} SECTION+FAMILY combinations")
+        return stock_analysis
+    
+    def _calculate_section_targets(self, total_units: int, section_percentages: Dict[str, float]) -> Dict[str, int]:
+        """
+        Calculate target units for each section.
+        
+        Args:
+            total_units: Total units to distribute
+            section_percentages: Percentages by section
+            
+        Returns:
+            Dict: Section targets
+        """
+        section_targets = {}
+        for section, percentage in section_percentages.items():
+            target_units = int(total_units * percentage / 100)
+            section_targets[section] = target_units
+            logger.info(f"Section {section}: {target_units} units ({percentage}%)")
+        
+        return section_targets
+    
+    def _calculate_section_family_targets(self, section_targets: Dict[str, int], family_percentages: Dict[str, float]) -> Dict[str, Dict[str, int]]:
+        """
+        Calculate target units for each SECTION+FAMILY combination.
+        
+        Args:
+            section_targets: Target units per section
+            family_percentages: Percentages by family
+            
+        Returns:
+            Dict: SECTION+FAMILY targets
+        """
+        section_family_targets = {}
+        for section, section_units in section_targets.items():
+            section_family_targets[section] = {}
+            for family, family_percentage in family_percentages.items():
+                target_units = int(section_units * family_percentage / 100)
+                section_family_targets[section][family] = target_units
+                logger.info(f"  {section} + {family}: {target_units} units ({family_percentage}%)")
+        
+        return section_family_targets
+    
+    def _calculate_detailed_targets(self, section_family_targets: Dict[str, Dict[str, int]], stock_analysis: Dict) -> Dict[str, Dict[str, Dict[str, int]]]:
+        """
+        Calculate target units for each SECTION+FAMILY+DETAIL combination.
+        
+        Args:
+            section_family_targets: Target units per SECTION+FAMILY
+            stock_analysis: Available stock analysis
+            
+        Returns:
+            Dict: Detailed targets
+        """
+        detailed_targets = {}
+        
+        for section, families in section_family_targets.items():
+            detailed_targets[section] = {}
+            for family, family_units in families.items():
+                detailed_targets[section][family] = {}
+                key = f"{section}|{family}"
+                
+                if key in stock_analysis:
+                    # Distribute family units among details based on available stock percentages
+                    details = stock_analysis[key]['details']
+                    for detail, detail_info in details.items():
+                        target_units = int(family_units * detail_info['percentage'] / 100)
+                        detailed_targets[section][family][detail] = target_units
+                        logger.info(f"    {section} + {family} + {detail}: {target_units} units")
+                else:
+                    logger.warning(f"No stock analysis found for {section}|{family}")
+        
+        return detailed_targets
+    
+    def _select_full_boxes(self, inventory_df: pd.DataFrame, detailed_targets: Dict[str, Dict[str, Dict[str, int]]]) -> List[Dict]:
+        """
+        Select full boxes (CARTONS) to meet the detailed targets.
+        
+        Args:
+            inventory_df: Inventory dataframe
+            detailed_targets: Target units per SECTION+FAMILY+DETAIL
+            
+        Returns:
+            List[Dict]: Selected boxes
+        """
+        logger.info("Selecting full boxes (CARTONS)...")
+        selected_cartons = set()
+        remaining_inventory = inventory_df.copy()
+        
+        # Group inventory by CARTONS
+        cartons_groups = remaining_inventory.groupby('cartons')
+        
+        # Calculate what each carton contains
+        carton_analysis = {}
+        for carton_id, carton_data in cartons_groups:
+            carton_analysis[carton_id] = {
+                'total_units': carton_data['units_per_case'].sum(),
+                'combinations': {},
+                'models': set(carton_data['model'].unique())
+            }
+            
+            # Analyze what combinations this carton contains
+            for _, row in carton_data.iterrows():
+                section = row['section']
+                family = row['family']
+                detail = row['detail']
+                combination_key = f"{section}|{family}|{detail}"
+                if combination_key not in carton_analysis[carton_id]['combinations']:
+                    carton_analysis[carton_id]['combinations'][combination_key] = 0
+                carton_analysis[carton_id]['combinations'][combination_key] += row['units_per_case']
+        
+        # Calculate total target units
+        total_target_units = 0
+        for section, families in detailed_targets.items():
+            for family, details in families.items():
+                for detail, target_units in details.items():
+                    total_target_units += target_units
+        
+        logger.info(f"Total target units: {total_target_units}")
+        
+        # Use a greedy approach to select cartons that best match the targets
+        current_units = 0
+        selected_cartons = set()
+        
+        # Create a list of cartons sorted by how well they match our targets
+        carton_scores = []
+        for carton_id, carton_info in carton_analysis.items():
+            score = 0
+            matching_combinations = 0
+            
+            for combination_key, carton_units in carton_info['combinations'].items():
+                section, family, detail = combination_key.split('|')
+                if (section in detailed_targets and 
+                    family in detailed_targets[section] and 
+                    detail in detailed_targets[section][family]):
+                    target_units = detailed_targets[section][family][detail]
+                    if target_units > 0:
+                        # Score based on how close this carton gets us to the target
+                        score += min(carton_units, target_units)
+                        matching_combinations += 1
+            
+            if matching_combinations > 0:
+                carton_scores.append((carton_id, score, carton_info))
+        
+        # Sort cartons by score (descending)
+        carton_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Select cartons until we meet the targets or run out of suitable cartons
+        for carton_id, score, carton_info in carton_scores:
+            if current_units >= total_target_units:
+                break
+                
+            # Check if adding this carton would exceed MOCAO + SIZE limit
+            carton_models = carton_info['models']
+            would_exceed_limit = False
+            
+            # Check if any model in this carton would exceed 300 units when combined with already selected cartons
+            for model in carton_models:
+                model_total = 0
+                for selected_carton_id in selected_cartons:
+                    selected_carton_info = carton_analysis[selected_carton_id]
+                    if model in selected_carton_info['models']:
+                        model_total += selected_carton_info['total_units']
+                
+                if model_total + carton_info['total_units'] > 300:
+                    would_exceed_limit = True
+                    break
+            
+            if not would_exceed_limit:
+                selected_cartons.add(carton_id)
+                current_units += carton_info['total_units']
+                logger.info(f"Selected carton {carton_id}: {carton_info['total_units']} units (total: {current_units})")
+        
+        # Convert selected cartons back to box list
+        selected_boxes = []
+        for carton_id in selected_cartons:
+            carton_data = cartons_groups.get_group(carton_id)
+            for _, row in carton_data.iterrows():
+                selected_boxes.append(row.to_dict())
+        
+        logger.info(f"Selected {len(selected_cartons)} cartons with {current_units} total units")
+        return selected_boxes
+    
+    def _apply_mocao_size_restriction(self, selected_boxes: List[Dict]) -> List[Dict]:
+        """
+        Apply MOCAO + SIZE restriction (300 units limit).
+        
+        Args:
+            selected_boxes: List of selected boxes
+            
+        Returns:
+            List[Dict]: Filtered boxes that meet MOCAO + SIZE restriction
+        """
+        logger.info("Applying MOCAO + SIZE restriction (300 units limit)...")
+        
+        # Group by model and check units limit
+        model_units = {}
+        for box in selected_boxes:
+            model = box['model']
+            units = box['units_per_case']
+            if model not in model_units:
+                model_units[model] = 0
+            model_units[model] += units
+        
+        # Filter out models that exceed 300 units
+        filtered_boxes = []
+        for box in selected_boxes:
+            model = box['model']
+            if model_units[model] <= 300:
+                filtered_boxes.append(box)
+            else:
+                logger.warning(f"Model {model} exceeds 300 units limit: {model_units[model]} units")
+        
+        logger.info(f"After MOCAO + SIZE restriction: {len(filtered_boxes)} boxes selected")
+        return filtered_boxes
     
     def _check_description_percentages(
         self, 
@@ -451,9 +574,20 @@ class InventoryPicker:
         actual_percentages = {}
         
         for description, target_percentage in description_percentages.items():
-            description_units = selected_df[
+            # Check both description and family columns
+            desc_units = selected_df[
                 selected_df['description'].str.lower().str.strip() == description.lower().strip()
             ]['units_per_case'].sum()
+            
+            # Also check family column if it exists
+            family_units = 0
+            if 'family' in selected_df.columns:
+                family_units = selected_df[
+                    selected_df['family'].str.lower().str.strip() == description.lower().strip()
+                ]['units_per_case'].sum()
+            
+            # Use the higher of the two (description or family match)
+            description_units = max(desc_units, family_units)
             
             actual_percentage = (description_units / total_units * 100) if total_units > 0 else 0
             actual_percentages[description] = actual_percentage
@@ -864,7 +998,7 @@ class InventoryPicker:
         excel_file_path: str,
         require_complete_info: bool,
         section_percentages: Dict[str, float],
-        description_percentages: Dict[str, float],
+        family_percentages: Dict[str, float],
         total_units_target: int,
         output_file: str = None
     ) -> Dict:
@@ -875,7 +1009,7 @@ class InventoryPicker:
             excel_file_path: Path to inventory Excel file
             require_complete_info: Whether to require complete information
             section_percentages: Target percentages by section
-            description_percentages: Target percentages by description
+            family_percentages: Target percentages by family
             total_units_target: Target total units
             output_file: Optional output file path
             
@@ -901,7 +1035,7 @@ class InventoryPicker:
         selected_boxes = self.select_by_percentage_distribution(
             constrained_inventory,
             section_percentages,
-            description_percentages,
+            family_percentages,
             total_units_target
         )
         
@@ -947,29 +1081,59 @@ class InventoryPicker:
             logger.warning("No boxes found for specified sections")
             return []
         
-        # Group boxes by description
+        # Group boxes by description and family
         boxes_by_description = {}
         for box in section_filtered_boxes:
+            # Use description as primary key, but also check family column
             desc = box['description']
-            if desc not in boxes_by_description:
-                boxes_by_description[desc] = []
-            boxes_by_description[desc].append(box)
+            family = box.get('family', '') if 'family' in box else ''
+            
+            # Create a composite key that includes both description and family for better categorization
+            if family and family.strip():
+                key = f"{desc}|{family}"
+            else:
+                key = desc
+            
+            if key not in boxes_by_description:
+                boxes_by_description[key] = []
+            boxes_by_description[key].append(box)
         
         # Phase 1: Select boxes to meet exact description percentages
         selected_boxes = []
         description_counts = {}
         
         for desc, target_units in description_targets.items():
-            if desc not in boxes_by_description:
+            # Try to find matching boxes for this description
+            matching_boxes = []
+            
+            # First, try exact match with the description
+            if desc in boxes_by_description:
+                matching_boxes = boxes_by_description[desc]
+            else:
+                # Try to find by family column or partial matches
+                for key, boxes in boxes_by_description.items():
+                    # Check if the key contains the description (for composite keys)
+                    if desc.lower().strip() in key.lower().strip():
+                        matching_boxes.extend(boxes)
+                        logger.info(f"Found matching boxes for '{desc}' using key '{key}': {len(boxes)} boxes")
+                        break
+                    
+                    # Check if any box in this group matches by family
+                    for box in boxes:
+                        family = box.get('family', '') if 'family' in box else ''
+                        if family and family.lower().strip() == desc.lower().strip():
+                            matching_boxes.append(box)
+                            logger.info(f"Found matching box for '{desc}' in family column: {family}")
+            
+            if not matching_boxes:
                 logger.warning(f"No boxes found for description: {desc}")
                 continue
             
-            desc_boxes = boxes_by_description[desc]
             # Sort by units per case (descending) for better efficiency
-            desc_boxes.sort(key=lambda x: x['units_per_case'], reverse=True)
+            matching_boxes.sort(key=lambda x: x['units_per_case'], reverse=True)
             
             # Use dynamic programming to find exact combination for this description
-            desc_selection = self._find_exact_combination_for_description(desc_boxes, target_units)
+            desc_selection = self._find_exact_combination_for_description(matching_boxes, target_units)
             
             if desc_selection:
                 selected_boxes.extend(desc_selection)
@@ -1478,7 +1642,7 @@ def main():
             excel_file_path=excel_file_path,
             require_complete_info=require_complete_info,
             section_percentages=section_percentages,
-            description_percentages=description_percentages,
+            family_percentages=description_percentages,
             total_units_target=total_units_target,
             output_file=output_file
         )

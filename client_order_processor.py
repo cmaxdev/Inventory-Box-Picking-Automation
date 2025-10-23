@@ -145,8 +145,9 @@ class ClientOrderProcessor:
         
         # Parse description percentages dynamically with flexible mapping
         # Support both formats: "50% dress" and "dress 50%"
+        # Include both English and French terms
         description_patterns = [
-            # Format: "50% dress" or "dress 50%"
+            # Format: "50% dress" or "dress 50%" - English terms for DESCRIPTION column
             (r'(\d+(?:\.\d+)?)\s*%\s*(dress|dresses|gown|gowns)|(dress|dresses|gown|gowns)\s*(\d+(?:\.\d+)?)\s*%', 'DRESS'),
             (r'(\d+(?:\.\d+)?)\s*%\s*(trousers|pants)|(trousers|pants)\s*(\d+(?:\.\d+)?)\s*%', 'TROUSERS'),
             (r'(\d+(?:\.\d+)?)\s*%\s*(t-shirt|tshirt|t shirt|top|tops)|(t-shirt|tshirt|t shirt|top|tops)\s*(\d+(?:\.\d+)?)\s*%', 'T-SHIRT'),
@@ -167,7 +168,22 @@ class ClientOrderProcessor:
             (r'(\d+(?:\.\d+)?)\s*%\s*(shorts|short)|(shorts|short)\s*(\d+(?:\.\d+)?)\s*%', 'SHORTS'),
             (r'(\d+(?:\.\d+)?)\s*%\s*(underwear|underwears)|(underwear|underwears)\s*(\d+(?:\.\d+)?)\s*%', 'UNDERWEAR'),
             (r'(\d+(?:\.\d+)?)\s*%\s*(socks|sock)|(socks|sock)\s*(\d+(?:\.\d+)?)\s*%', 'SOCKS'),
-            (r'(\d+(?:\.\d+)?)\s*%\s*(tank-top|tank tops|tanktop|tanktops)|(tank-top|tank tops|tanktop|tanktops)\s*(\d+(?:\.\d+)?)\s*%', 'TANK-TOP')
+            (r'(\d+(?:\.\d+)?)\s*%\s*(tank-top|tank tops|tanktop|tanktops)|(tank-top|tank tops|tanktop|tanktops)\s*(\d+(?:\.\d+)?)\s*%', 'TANK-TOP'),
+            
+            # French terms for FAMILLIE column - these should be treated as family categories
+            (r'(\d+(?:\.\d+)?)\s*%\s*(robe|robes)|(robe|robes)\s*(\d+(?:\.\d+)?)\s*%', 'ROBE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(pantalons|pantalon)|(pantalons|pantalon)\s*(\d+(?:\.\d+)?)\s*%', 'PANTALONS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(chemise|chemises)|(chemise|chemises)\s*(\d+(?:\.\d+)?)\s*%', 'CHEMISE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(accessoir|accessoires)|(accessoir|accessoires)\s*(\d+(?:\.\d+)?)\s*%', 'ACCESSOIR'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(combinaison|combinaisons)|(combinaison|combinaisons)\s*(\d+(?:\.\d+)?)\s*%', 'COMBINAISON'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(exterieur|extérieur)|(exterieur|extérieur)\s*(\d+(?:\.\d+)?)\s*%', 'EXTERIEUR'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(t-shirt|tshirt|t shirt)|(t-shirt|tshirt|t shirt)\s*(\d+(?:\.\d+)?)\s*%', 'T-SHIRT'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(jupe|jupes)|(jupe|jupes)\s*(\d+(?:\.\d+)?)\s*%', 'JUPE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(chaussure|chaussures)|(chaussure|chaussures)\s*(\d+(?:\.\d+)?)\s*%', 'CHAUSSURE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(sacs|sac)|(sacs|sac)\s*(\d+(?:\.\d+)?)\s*%', 'SACS'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(maille|mailles)|(maille|mailles)\s*(\d+(?:\.\d+)?)\s*%', 'MAILLE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(ensemble|ensembles)|(ensemble|ensembles)\s*(\d+(?:\.\d+)?)\s*%', 'ENSEMBLE'),
+            (r'(\d+(?:\.\d+)?)\s*%\s*(bas|bases)|(bas|bases)\s*(\d+(?:\.\d+)?)\s*%', 'BAS')
         ]
         
         for pattern, description_name in description_patterns:
@@ -275,7 +291,7 @@ class ClientOrderProcessor:
                 excel_file_path=inventory_file,
                 require_complete_info=require_complete_info,
                 section_percentages=parsed_reqs["section_percentages"],
-                description_percentages=parsed_reqs["description_percentages"],
+                family_percentages=parsed_reqs["description_percentages"],
                 total_units_target=total_units,
                 output_file=output_file
             )
